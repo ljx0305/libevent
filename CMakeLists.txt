@@ -18,7 +18,11 @@
 #       cmake -G "Visual Studio 10" ..
 #       start libevent.sln
 #
-cmake_minimum_required(VERSION 2.8.0 FATAL_ERROR)
+if (WIN32)
+    cmake_minimum_required(VERSION 3.1 FATAL_ERROR)
+else()
+    cmake_minimum_required(VERSION 2.8.0 FATAL_ERROR)
+endif()
 
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release
@@ -145,7 +149,7 @@ endif()
 # Setup compiler flags for coverage.
 if (EVENT__COVERAGE)
     if ((NOT CMAKE_COMPILER_IS_GNUCC) AND (NOT ${CMAKE_CXX_COMPILER_ID} STREQAL "Clang"))
-            message(FATAL_ERROR"Trying to compile coverage support,  but compiler is not GNU gcc! Try CC=/usr/bin/gcc CXX=/usr/bin/g++ cmake <options> ..")
+        message(FATAL_ERROR "Trying to compile coverage support, but compiler is not GNU gcc! Try CC=/usr/bin/gcc CXX=/usr/bin/g++ cmake <options> ..")
     endif()
 
     if(NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
@@ -153,7 +157,7 @@ if (EVENT__COVERAGE)
     endif()
 
     message(STATUS "Setting coverage compiler flags")
-        add_compiler_flags(-g -O0 -fprofile-arcs -ftest-coverage)
+    add_compiler_flags(-g -O0 -fprofile-arcs -ftest-coverage)
 endif()
 
 # GCC specific options.
@@ -163,44 +167,45 @@ if (CMAKE_COMPILER_IS_GNUCC)
     option(EVENT__ENABLE_GCC_FUNCTION_SECTIONS "Enable gcc function sections" OFF)
     option(EVENT__ENABLE_GCC_WARNINGS "Make all GCC warnings into errors" OFF)
 
-        list(APPEND __FLAGS -Wall)
+    list(APPEND __FLAGS -Wall -Wswitch)
 
     if (EVENT__DISABLE_GCC_WARNINGS)
-            list(APPEND __FLAGS -w)
+        list(APPEND __FLAGS -w)
     endif()
 
     if (EVENT__ENABLE_GCC_HARDENING)
-            list(APPEND __FLAGS
-                -fstack-protector-all
-                -fwrapv
-                -fPIE
-                -Wstack-protector
-                "--param ssp-buffer-size=1")
+        list(APPEND __FLAGS
+             -fstack-protector-all
+             -fwrapv
+             -fPIE
+             -Wstack-protector
+             "--param ssp-buffer-size=1")
 
-                add_definitions(-D_FORTIFY_SOURCE=2)
+        add_definitions(-D_FORTIFY_SOURCE=2)
     endif()
 
     if (EVENT__ENABLE_GCC_FUNCTION_SECTIONS)
-            list(APPEND __FLAGS -ffunction-sections)
+        list(APPEND __FLAGS -ffunction-sections)
         # TODO: Add --gc-sections support. We need some checks for NetBSD to ensure this works.
     endif()
 
     if (EVENT__ENABLE_GCC_WARNINGS)
-            list(APPEND __FLAGS -Werror)
+        list(APPEND __FLAGS -Werror)
     endif()
 
     # We need to test for at least gcc 2.95 here, because older versions don't
     # have -fno-strict-aliasing
-        list(APPEND __FLAGS -fno-strict-aliasing)
+    list(APPEND __FLAGS -fno-strict-aliasing)
 
-        add_compiler_flags(__FLAGS)
+    add_compiler_flags(${__FLAGS})
 endif()
 
 if (APPLE)
     # Get rid of deprecated warnings for OpenSSL on OSX 10.7 and greater.
-        add_compiler_flags(
-            -Wno-error=deprecated-declarations
-            -Qunused-arguments)
+    add_compiler_flags(
+        -Wno-error=deprecated-declarations
+        -Qunused-arguments
+    )
 endif()
 
 # Winsock.

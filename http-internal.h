@@ -76,6 +76,9 @@ struct evhttp_connection {
 #define EVHTTP_CON_CLOSEDETECT	0x0004   /* detecting if persistent close */
 /* set when we want to auto free the connection */
 #define EVHTTP_CON_AUTOFREE	EVHTTP_CON_PUBLIC_FLAGS_END
+/* Installed when attempt to read HTTP error after write failed, see
+ * EVHTTP_CON_READ_ON_WRITE_ERROR */
+#define EVHTTP_CON_READING_ERROR	(EVHTTP_CON_AUTOFREE << 1)
 
 	struct timeval timeout;		/* timeout for events */
 	int retry_cnt;			/* retry count */
@@ -154,6 +157,7 @@ struct evhttp {
 
 	size_t default_max_headers_size;
 	ev_uint64_t default_max_body_size;
+	int flags;
 	const char *default_content_type;
 
 	/* Bitmask of all HTTP methods that we accept and pass to user
@@ -189,6 +193,7 @@ enum message_read_status evhttp_parse_firstline_(struct evhttp_request *, struct
 enum message_read_status evhttp_parse_headers_(struct evhttp_request *, struct evbuffer*);
 
 void evhttp_start_read_(struct evhttp_connection *);
+void evhttp_start_write_(struct evhttp_connection *);
 
 /* response sending HTML the data in the buffer */
 void evhttp_response_code_(struct evhttp_request *, int, const char *);
