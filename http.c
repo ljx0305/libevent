@@ -586,7 +586,7 @@ static enum expect evhttp_have_expect(struct evhttp_request *req, int input)
 	const char *expect;
 	struct evkeyvalq *h = input ? req->input_headers : req->output_headers;
 
-	if (!req->kind == EVHTTP_REQUEST || !REQ_VERSION_ATLEAST(req, 1, 1))
+	if (!(req->kind == EVHTTP_REQUEST) || !REQ_VERSION_ATLEAST(req, 1, 1))
 		return NO;
 
 	expect = evhttp_find_header(h, "Expect");
@@ -1244,6 +1244,9 @@ evhttp_connection_free(struct evhttp_connection *evcon)
 	event_deferred_cb_cancel_(get_deferred_queue(evcon),
 	    &evcon->read_more_deferred_cb);
 
+	if (evcon->fd == -1)
+		evcon->fd = bufferevent_getfd(evcon->bufev);
+
 	if (evcon->fd != -1) {
 		bufferevent_disable(evcon->bufev, EV_READ|EV_WRITE);
 		shutdown(evcon->fd, EVUTIL_SHUT_WR);
@@ -1329,6 +1332,9 @@ evhttp_connection_reset_(struct evhttp_connection *evcon)
 	*/
 	bufferevent_disable_hard_(evcon->bufev, EV_READ|EV_WRITE);
 
+	if (evcon->fd == -1)
+		evcon->fd = bufferevent_getfd(evcon->bufev);
+
 	if (evcon->fd != -1) {
 		/* inform interested parties about connection close */
 		if (evhttp_connected(evcon) && evcon->closecb != NULL)
@@ -1336,9 +1342,9 @@ evhttp_connection_reset_(struct evhttp_connection *evcon)
 
 		shutdown(evcon->fd, EVUTIL_SHUT_WR);
 		evutil_closesocket(evcon->fd);
-		bufferevent_setfd(evcon->bufev, -1);
 		evcon->fd = -1;
 	}
+	bufferevent_setfd(evcon->bufev, -1);
 
 	/* we need to clean up any buffered data */
 	tmp = bufferevent_get_output(evcon->bufev);
