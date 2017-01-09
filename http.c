@@ -80,7 +80,6 @@
 #include <syslog.h>
 #endif
 #include <signal.h>
-#include <time.h>
 #ifdef EVENT__HAVE_UNISTD_H
 #include <unistd.h>
 #endif
@@ -435,7 +434,10 @@ evhttp_make_header_request(struct evhttp_connection *evcon,
 	evhttp_remove_header(req->output_headers, "Proxy-Connection");
 
 	/* Generate request line */
-	method = evhttp_method(req->type);
+	if (!(method = evhttp_method(req->type))) {
+		method = "NULL";
+	}
+
 	evbuffer_add_printf(bufferevent_get_output(evcon->bufev),
 	    "%s %s HTTP/%d.%d\r\n",
 	    method, req->uri, req->major, req->minor);
@@ -488,19 +490,7 @@ evhttp_maybe_add_date_header(struct evkeyvalq *headers)
 {
 	if (evhttp_find_header(headers, "Date") == NULL) {
 		char date[50];
-#ifndef _WIN32
-		struct tm cur;
-#endif
-		struct tm *cur_p;
-		time_t t = time(NULL);
-#ifdef _WIN32
-		cur_p = gmtime(&t);
-#else
-		gmtime_r(&t, &cur);
-		cur_p = &cur;
-#endif
-		if (strftime(date, sizeof(date),
-			"%a, %d %b %Y %H:%M:%S GMT", cur_p) != 0) {
+		if (sizeof(date) - evutil_date_rfc1123(date, sizeof(date), NULL) > 0) {
 			evhttp_add_header(headers, "Date", date);
 		}
 	}
@@ -1019,8 +1009,8 @@ evhttp_lingering_close(struct evhttp_connection *evcon,
 	req->ntoread -= n;
 	req->body_size += n;
 
-	event_debug(("Request body is too long, left " EV_SIZE_FMT,
-		EV_SIZE_ARG(req->ntoread)));
+	event_debug(("Request body is too long, left " EV_I64_FMT,
+		EV_I64_ARG(req->ntoread)));
 
 	evbuffer_drain(buf, n);
 	if (!req->ntoread)
@@ -2339,14 +2329,14 @@ evhttp_read_header(struct evhttp_connection *evcon,
  */
 
 struct evhttp_connection *
-evhttp_connection_new(const char *address, unsigned short port)
+evhttp_connection_new(const char *address, ev_uint16_t port)
 {
 	return (evhttp_connection_base_new(NULL, NULL, address, port));
 }
 
 struct evhttp_connection *
 evhttp_connection_base_bufferevent_new(struct event_base *base, struct evdns_base *dnsbase, struct bufferevent* bev,
-    const char *address, unsigned short port)
+    const char *address, ev_uint16_t port)
 {
 	struct evhttp_connection *evcon = NULL;
 
@@ -2422,7 +2412,7 @@ evhttp_connection_get_server(struct evhttp_connection *evcon)
 
 struct evhttp_connection *
 evhttp_connection_base_new(struct event_base *base, struct evdns_base *dnsbase,
-    const char *address, unsigned short port)
+    const char *address, ev_uint16_t port)
 {
 	return evhttp_connection_base_bufferevent_new(base, dnsbase, NULL, address, port);
 }
@@ -3071,13 +3061,31 @@ evhttp_uriencode(const char *uri, ev_ssize_t len, int space_as_plus)
 	const char *p, *end;
 	char *result;
 
-	if (buf == NULL)
+	if (buf == NULL) {
 		return (NULL);
+	}
 
-	if (len >= 0)
-		end = uri+len;
-	else
-		end = uri+strlen(uri);
+
+	if (len >= 0) {
+		if (uri + len < uri) {
+			return (NULL);
+		}
+
+		end = uri + len;
+	} else {
+		size_t slen = strlen(uri);
+
+		if (slen >= EV_SSIZE_MAX) {
+			/* we don't want to mix signed and unsigned */
+			return (NULL);
+		}
+
+		if (uri + slen < uri) {
+			return (NULL);
+		}
+
+		end = uri + slen;
+	}
 
 	for (p = uri; p < end; p++) {
 		if (CHAR_IS_UNRESERVED(*p)) {
@@ -3088,10 +3096,13 @@ evhttp_uriencode(const char *uri, ev_ssize_t len, int space_as_plus)
 			evbuffer_add_printf(buf, "%%%02X", (unsigned char)(*p));
 		}
 	}
+
 	evbuffer_add(buf, "", 1); /* NUL-terminator. */
 	result = mm_malloc(evbuffer_get_length(buf));
+
 	if (result)
 		evbuffer_remove(buf, result, evbuffer_get_length(buf));
+
 	evbuffer_free(buf);
 
 	return (result);
@@ -3641,7 +3652,7 @@ evhttp_new(struct event_base *base)
  */
 
 struct evhttp *
-evhttp_start(const char *address, unsigned short port)
+evhttp_start(const char *address, ev_uint16_t port)
 {
 	struct evhttp *http = NULL;
 

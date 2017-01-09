@@ -6,6 +6,7 @@
 
 [![Appveyor Win32 Build Status](https://ci.appveyor.com/api/projects/status/github/libevent/libevent?branch=master&svg=true)](https://ci.appveyor.com/project/nmathewson/libevent)
 [![Travis Build Status](https://travis-ci.org/libevent/libevent.svg?branch=master)](https://travis-ci.org/libevent/libevent)
+[![Coverage Status](https://coveralls.io/repos/github/libevent/libevent/badge.svg)](https://coveralls.io/github/libevent/libevent)
 
 
 
@@ -21,7 +22,7 @@
 ## Cmake (General)
 
 
-The following Libevent specific Cmake variables ar as follows (the values being
+The following Libevent specific Cmake variables are as follows (the values being
 the default).
 
 ```
@@ -54,7 +55,7 @@ EVENT__DISABLE_DEBUG_MODE:BOOL=OFF
 EVENT__DISABLE_MM_REPLACEMENT:BOOL=OFF
 
 # Define if libevent should build without support for OpenSSL encrpytion
-EVENT__DISABLE_OPENSSL:BOOL=ON
+EVENT__DISABLE_OPENSSL:BOOL=OFF
 
 # Disable the regress tests
 EVENT__DISABLE_REGRESS:BOOL=OFF
@@ -277,7 +278,6 @@ fixing bugs:
  * Greg Hazel
  * Nicholas Heath
  * Michael Herf
- * Sebastian Hahn
  * Savg He
  * Mark Heily
  * Maxime Henrion
@@ -393,5 +393,35 @@ fixing bugs:
  * masksqwe
  * mmadia
  * yangacer
+ * Andrey Skriabin
+ * basavesh.as
+ * billsegall
+ * Bill Vaughan
+ * Christopher Wiley
+ * David Paschich
+ * Ed Schouten
+ * Eduardo Panisset
+ * Jan Heylen
+ * jer-gentoo
+ * Joakim Söderberg
+ * kirillDanshin
+ * lzmths
+ * Marcus Sundberg
+ * Mark Mentovai
+ * Mattes D
+ * Matyas Dolak
+ * Neeraj Badlani
+ * Nick Mathewson
+ * Rainer Keller
+ * Seungmo Koo
+ * Thomas Bernard
+ * Xiao Bao Clark
+ * zeliard
+ * Zonr Chang
+ * Kurt Roeckx
+ * Seven
+ * Simone Basso
+ * Vlad Shcherban
+ * Tim Hentenaar
 
 If we have forgotten your name, please contact us.

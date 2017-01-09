@@ -164,7 +164,7 @@ http_setup(ev_uint16_t *pport, struct event_base *base, int mask)
 #endif
 
 static evutil_socket_t
-http_connect(const char *address, unsigned short port)
+http_connect(const char *address, ev_uint16_t port)
 {
 	/* Stupid code for connecting */
 	struct evutil_addrinfo ai, *aitop;
@@ -478,7 +478,7 @@ http_basic_test_impl(void *arg, int ssl)
 
 	bufferevent_write(bev, http_request, strlen(http_request));
 	evutil_timerclear(&tv);
-	tv.tv_usec = 10000;
+	tv.tv_usec = 100000;
 	event_base_once(data->base,
 	    -1, EV_TIMEOUT, http_complete_write, bev, &tv);
 
@@ -1004,12 +1004,21 @@ static void http_request_empty_done(struct evhttp_request *, void *);
 
 static void
 http_connection_test_(struct basic_test_data *data, int persistent,
-	const char *address, struct evdns_base *dnsbase, int ipv6, int family)
+	const char *address, struct evdns_base *dnsbase, int ipv6, int family,
+	int ssl)
 {
 	ev_uint16_t port = 0;
 	struct evhttp_connection *evcon = NULL;
 	struct evhttp_request *req = NULL;
-	struct evhttp *http = http_setup(&port, data->base, ipv6);
+	struct evhttp *http;
+
+	int mask = 0;
+	if (ipv6)
+		mask |= HTTP_BIND_IPV6;
+	if (ssl)
+		mask |= HTTP_BIND_SSL;
+
+	http = http_setup(&port, data->base, mask);
 
 	test_ok = 0;
 	if (!http && ipv6) {
@@ -1017,7 +1026,21 @@ http_connection_test_(struct basic_test_data *data, int persistent,
 	}
 	tt_assert(http);
 
-	evcon = evhttp_connection_base_new(data->base, dnsbase, address, port);
+	if (ssl) {
+#ifdef EVENT__HAVE_OPENSSL
+		SSL *ssl = SSL_new(get_ssl_ctx());
+		struct bufferevent *bev = bufferevent_openssl_socket_new(
+			data->base, -1, ssl,
+			BUFFEREVENT_SSL_CONNECTING, BEV_OPT_DEFER_CALLBACKS);
+		bufferevent_openssl_set_allow_dirty_shutdown(bev, 1);
+
+		evcon = evhttp_connection_base_bufferevent_new(data->base, dnsbase, bev, address, port);
+#else
+		tt_skip();
+#endif
+	} else {
+		evcon = evhttp_connection_base_new(data->base, dnsbase, address, port);
+	}
 	tt_assert(evcon);
 	evhttp_connection_set_family(evcon, family);
 
@@ -1093,12 +1116,12 @@ http_connection_test_(struct basic_test_data *data, int persistent,
 static void
 http_connection_test(void *arg)
 {
-	http_connection_test_(arg, 0, "127.0.0.1", NULL, 0, AF_UNSPEC);
+	http_connection_test_(arg, 0, "127.0.0.1", NULL, 0, AF_UNSPEC, 0);
 }
 static void
 http_persist_connection_test(void *arg)
 {
-	http_connection_test_(arg, 1, "127.0.0.1", NULL, 0, AF_UNSPEC);
+	http_connection_test_(arg, 1, "127.0.0.1", NULL, 0, AF_UNSPEC, 0);
 }
 
 static struct regress_dns_server_table search_table[] = {
@@ -1388,10 +1411,10 @@ http_cancel_test(void *arg)
 	struct evhttp *inactive_http = NULL;
 	struct event_base *inactive_base = NULL;
 	struct evhttp_connection **evcons = NULL;
+	struct event_base *base_to_fill = data->base;
 
-	enum http_cancel_test_type type;
-	type = (enum http_cancel_test_type)data->setup_data;
-
+	enum http_cancel_test_type type =
+		(enum http_cancel_test_type)data->setup_data;
 	struct evhttp *http = http_setup(&port, data->base, 0);
 
 	if (type & BY_HOST) {
@@ -1422,10 +1445,12 @@ http_cancel_test(void *arg)
 		port = 0;
 		inactive_base = event_base_new();
 		inactive_http = http_setup(&port, inactive_base, 0);
+
+		base_to_fill = inactive_base;
 	}
 
 	if (type & SERVER_TIMEOUT)
-		evcons = http_fill_backlog(inactive_base ?: data->base, port);
+		evcons = http_fill_backlog(base_to_fill, port);
 
 	evcon = evhttp_connection_base_new(
 		data->base, dns_base,
@@ -1474,7 +1499,7 @@ http_cancel_test(void *arg)
 
 	http_free_evcons(evcons);
 	if (type & SERVER_TIMEOUT)
-		evcons = http_fill_backlog(inactive_base ?: data->base, port);
+		evcons = http_fill_backlog(base_to_fill, port);
 
 	req = http_cancel_test_bad_request_new(type, data->base);
 	if (!req)
@@ -1494,7 +1519,7 @@ http_cancel_test(void *arg)
 
 	http_free_evcons(evcons);
 	if (type & SERVER_TIMEOUT)
-		evcons = http_fill_backlog(inactive_base ?: data->base, port);
+		evcons = http_fill_backlog(base_to_fill, port);
 
 	req = http_cancel_test_bad_request_new(type, data->base);
 	if (!req)
@@ -1537,6 +1562,11 @@ static void
 http_request_done(struct evhttp_request *req, void *arg)
 {
 	const char *what = arg;
+
+	if (!req) {
+		fprintf(stderr, "FAILED\n");
+		exit(1);
+	}
 
 	if (evhttp_request_get_response_code(req) != HTTP_OK) {
 		fprintf(stderr, "FAILED\n");
@@ -1741,6 +1771,11 @@ http_virtual_host_test(void *arg)
 static void
 http_request_empty_done(struct evhttp_request *req, void *arg)
 {
+	if (!req) {
+		fprintf(stderr, "FAILED\n");
+		exit(1);
+	}
+
 	if (evhttp_request_get_response_code(req) != HTTP_OK) {
 		fprintf(stderr, "FAILED\n");
 		exit(1);
@@ -3572,6 +3607,10 @@ http_simple_test_impl(void *arg, int ssl, int dirty)
 	test_ok = 0;
 
 	bev = create_bev(data->base, -1, ssl);
+#ifdef EVENT__HAVE_OPENSSL
+	bufferevent_openssl_set_allow_dirty_shutdown(bev, dirty);
+#endif
+
 	evcon = evhttp_connection_base_bufferevent_new(
 		data->base, NULL, bev, "127.0.0.1", hs.port);
 	tt_assert(evcon);
@@ -4287,7 +4326,7 @@ http_ipv6_for_domain_test_impl(void *arg, int family)
 	evdns_base_nameserver_ip_add(dns_base, address);
 
 	http_connection_test_(arg, 0 /* not persistent */, "localhost", dns_base,
-		1 /* ipv6 */, family);
+		1 /* ipv6 */, family, 0);
 
  end:
 	if (dns_base)
@@ -4365,12 +4404,12 @@ http_get_addr_test(void *arg)
 static void
 http_set_family_test(void *arg)
 {
-	http_connection_test_(arg, 0, "127.0.0.1", NULL, 0, AF_UNSPEC);
+	http_connection_test_(arg, 0, "127.0.0.1", NULL, 0, AF_UNSPEC, 0);
 }
 static void
 http_set_family_ipv4_test(void *arg)
 {
-	http_connection_test_(arg, 0, "127.0.0.1", NULL, 0, AF_INET);
+	http_connection_test_(arg, 0, "127.0.0.1", NULL, 0, AF_INET, 0);
 }
 static void
 http_set_family_ipv6_test(void *arg)
@@ -4469,6 +4508,8 @@ http_request_own_test(void *arg)
 		    http_##name##_test }
 
 #define HTTP_CAST_ARG(a) ((void *)(a))
+#define HTTP_OFF_N(title, name, arg) \
+	{ #title, http_##name##_test, TT_ISOLATED|TT_OFF_BY_DEFAULT, &basic_setup, HTTP_CAST_ARG(arg) }
 #define HTTP_N(title, name, arg) \
 	{ #title, http_##name##_test, TT_ISOLATED, &basic_setup, HTTP_CAST_ARG(arg) }
 #define HTTP(name) HTTP_N(name, name, NULL)
@@ -4498,6 +4539,10 @@ static void https_connection_fail_test(void *arg)
 { return http_connection_fail_test_impl(arg, 1); }
 static void https_write_during_read_test(void *arg)
 { return http_write_during_read_test_impl(arg, 1); }
+static void https_connection_test(void *arg)
+{ return http_connection_test_(arg, 0, "127.0.0.1", NULL, 0, AF_UNSPEC, 1); }
+static void https_persist_connection_test(void *arg)
+{ return http_connection_test_(arg, 1, "127.0.0.1", NULL, 0, AF_UNSPEC, 1); }
 #endif
 
 struct testcase_t http_testcases[] = {
@@ -4517,12 +4562,12 @@ struct testcase_t http_testcases[] = {
 	HTTP_N(cancel_by_host_inactive_server, cancel, BY_HOST | INACTIVE_SERVER),
 	HTTP_N(cancel_inactive_server, cancel, INACTIVE_SERVER),
 	HTTP_N(cancel_by_host_no_ns_inactive_server, cancel, BY_HOST | NO_NS | INACTIVE_SERVER),
-	HTTP_N(cancel_by_host_server_timeout, cancel, BY_HOST | INACTIVE_SERVER | SERVER_TIMEOUT),
-	HTTP_N(cancel_server_timeout, cancel, INACTIVE_SERVER | SERVER_TIMEOUT),
-	HTTP_N(cancel_by_host_no_ns_server_timeout, cancel, BY_HOST | NO_NS | INACTIVE_SERVER | SERVER_TIMEOUT),
+	HTTP_OFF_N(cancel_by_host_server_timeout, cancel, BY_HOST | INACTIVE_SERVER | SERVER_TIMEOUT),
+	HTTP_OFF_N(cancel_server_timeout, cancel, INACTIVE_SERVER | SERVER_TIMEOUT),
+	HTTP_OFF_N(cancel_by_host_no_ns_server_timeout, cancel, BY_HOST | NO_NS | INACTIVE_SERVER | SERVER_TIMEOUT),
+	HTTP_OFF_N(cancel_by_host_ns_timeout_server_timeout, cancel, BY_HOST | NO_NS | NS_TIMEOUT | INACTIVE_SERVER | SERVER_TIMEOUT),
 	HTTP_N(cancel_by_host_ns_timeout, cancel, BY_HOST | NO_NS | NS_TIMEOUT),
 	HTTP_N(cancel_by_host_ns_timeout_inactive_server, cancel, BY_HOST | NO_NS | NS_TIMEOUT | INACTIVE_SERVER),
-	HTTP_N(cancel_by_host_ns_timeout_server_timeout, cancel, BY_HOST | NO_NS | NS_TIMEOUT | INACTIVE_SERVER | SERVER_TIMEOUT),
 
 	HTTP(virtual_host),
 	HTTP(post),
@@ -4586,6 +4631,8 @@ struct testcase_t http_testcases[] = {
 	HTTPS(stream_out),
 	HTTPS(connection_fail),
 	HTTPS(write_during_read),
+	HTTPS(connection),
+	HTTPS(persist_connection),
 #endif
 
 	END_OF_TESTCASES

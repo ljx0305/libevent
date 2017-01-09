@@ -827,15 +827,53 @@ fork_signal_cb(evutil_socket_t fd, short events, void *arg)
 	event_del(arg);
 }
 
+int child_pair[2] = { -1, -1 };
+static void
+simple_child_read_cb(evutil_socket_t fd, short event, void *arg)
+{
+	char buf[256];
+	int len;
 
+	len = read(fd, buf, sizeof(buf));
+	if (write(child_pair[0], "", 1) < 0)
+		tt_fail_perror("write");
+
+	if (len) {
+		if (!called) {
+			if (event_add(arg, NULL) == -1)
+				exit(1);
+		}
+	} else if (called == 1)
+		test_ok = 1;
+
+	called++;
+}
 static void
 test_fork(void)
 {
+	char c;
 	int status;
 	struct event ev, sig_ev, usr_ev, existing_ev;
 	pid_t pid;
+	int wait_flags = 0;
+
+#ifdef EVENT__HAVE_WAITPID_WITH_WNOWAIT
+	wait_flags |= WNOWAIT;
+#endif
 
 	setup_test("After fork: ");
+
+	{
+		if (evutil_socketpair(AF_UNIX, SOCK_STREAM, 0, child_pair) == -1) {
+			fprintf(stderr, "%s: socketpair\n", __func__);
+			exit(1);
+		}
+
+		if (evutil_make_socket_nonblocking(child_pair[0]) == -1) {
+			fprintf(stderr, "fcntl(O_NONBLOCK)");
+			exit(1);
+		}
+	}
 
 	tt_assert(current_base);
 	evthread_make_base_notifiable(current_base);
@@ -844,7 +882,7 @@ test_fork(void)
 		tt_fail_perror("write");
 	}
 
-	event_set(&ev, pair[1], EV_READ, simple_read_cb, &ev);
+	event_set(&ev, pair[1], EV_READ, simple_child_read_cb, &ev);
 	if (event_add(&ev, NULL) == -1)
 		exit(1);
 
@@ -887,19 +925,17 @@ test_fork(void)
 		exit(test_ok != 0 || called != 2 ? -2 : 76);
 	}
 
-	/* wait for the child to read the data */
-	{
-		const struct timeval tv = { 0, 100000 };
-		evutil_usleep_(&tv);
+	/** wait until client read first message */
+	if (read(child_pair[1], &c, 1) < 0) {
+		tt_fail_perror("read");
 	}
-
 	if (write(pair[0], TEST1, strlen(TEST1)+1) < 0) {
 		tt_fail_perror("write");
 	}
 
 	TT_BLATHER(("Before waitpid"));
-	if (waitpid(pid, &status, 0) == -1) {
-		fprintf(stdout, "FAILED (fork)\n");
+	if (waitpid(pid, &status, wait_flags) == -1) {
+		perror("waitpid");
 		exit(1);
 	}
 	TT_BLATHER(("After waitpid"));
@@ -924,9 +960,14 @@ test_fork(void)
 	event_dispatch();
 
 	evsignal_del(&sig_ev);
+	tt_int_op(test_ok, ==, 1);
 
 	end:
 	cleanup_test();
+	if (child_pair[0] != -1)
+		evutil_closesocket(child_pair[0]);
+	if (child_pair[1] != -1)
+		evutil_closesocket(child_pair[1]);
 }
 
 #ifdef EVENT__HAVE_PTHREADS
@@ -2795,14 +2836,46 @@ end:
 	}
 }
 
-#ifndef _WIN32
-/* You can't do this test on windows, since dup2 doesn't work on sockets */
-
 static void
 dfd_cb(evutil_socket_t fd, short e, void *data)
 {
 	*(int*)data = (int)e;
 }
+
+static void
+test_event_closed_fd_poll(void *arg)
+{
+	struct timeval tv;
+	struct event *e;
+	struct basic_test_data *data = (struct basic_test_data *)arg;
+	int i = 0;
+
+	if (strcmp(event_base_get_method(data->base), "poll")) {
+		tinytest_set_test_skipped_();
+		return;
+	}
+
+	e = event_new(data->base, data->pair[0], EV_READ, dfd_cb, &i);
+	tt_assert(e);
+
+	tv.tv_sec = 0;
+	tv.tv_usec = 500 * 1000;
+	event_add(e, &tv);
+	tt_assert(event_pending(e, EV_READ, NULL));
+	close(data->pair[0]);
+	data->pair[0] = -1; /** avoids double-close */
+	event_base_loop(data->base, EVLOOP_ONCE);
+	tt_int_op(i, ==, EV_READ);
+
+end:
+	if (e) {
+		event_del(e);
+		event_free(e);
+	}
+}
+
+#ifndef _WIN32
+/* You can't do this test on windows, since dup2 doesn't work on sockets */
 
 /* Regression test for our workaround for a fun epoll/linux related bug
  * where fd2 = dup(fd1); add(fd2); close(fd2); dup2(fd1,fd2); add(fd2)
@@ -3340,6 +3413,9 @@ struct testcase_t main_testcases[] = {
 	{ "event_once_never", test_event_once_never, TT_ISOLATED, &basic_setup, NULL },
 	{ "event_pending", test_event_pending, TT_ISOLATED, &basic_setup,
 	  NULL },
+	{ "event_closed_fd_poll", test_event_closed_fd_poll, TT_ISOLATED, &basic_setup,
+	  NULL },
+
 #ifndef _WIN32
 	{ "dup_fd", test_dup_fd, TT_ISOLATED, &basic_setup, NULL },
 #endif
